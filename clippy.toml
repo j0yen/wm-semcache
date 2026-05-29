@@ -1,0 +1,8 @@
+# clippy.toml — project-level clippy configuration.
+# READ-ONLY after scaffold.
+
+# Allow up to 7 args in public API functions (embedder + config combos need them)
+too-many-arguments-threshold = 7
+
+# Cognitive complexity threshold
+cognitive-complexity-threshold = 20

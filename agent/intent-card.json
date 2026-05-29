@@ -1,0 +1,130 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "wm-semcache",
+  "prd_source": "/home/jsy/wintermute/autobuilder/PRD-wm-semcache.md",
+  "root_motivation": "An elderly companion AI fields the same questions repeatedly (e.g. 'what day is it?', 'what did I have for breakfast?'). Each repeat costs a full Sonnet API turn. By caching semantically-equivalent utterances via embedding similarity, the vast majority of repeated questions can be answered for zero API cost — while a hard cache-unsafe gate prevents the cache from ever serving stale time/weather/calendar answers that would be a harmful lie.",
+  "user_persona": "jsy, running a companion assistant for his mother at home. The assistant runs on a local device. API budget is finite; the same 10-20 questions repeat across the day. A wrong answer about time or calendar is worse than a cache miss.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --workspace --no-fail-fast 2>&1 | grep -cE '^test acceptance_[a-z0-9_]+ \\.\\.\\.  ok'",
+    "target": 8
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "store then lookup of a paraphrase (different words, same meaning) returns the cached response when cosine >= threshold, using a deterministic stubbed embedder (no live socket in tests).",
+      "test": "tests/acceptance_ac1.rs::paraphrase_hit_returns_cached_response"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "lookup of an unrelated utterance (cosine < threshold) returns None (no false hit), proven with a fixture pair using the stubbed embedder.",
+      "test": "tests/acceptance_ac2.rs::unrelated_utterance_returns_none"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Cache-unsafe gate: an utterance classified cache-unsafe returns None from lookup and is rejected by store, even when an identical entry exists — tested by pre-seeding a 'what time is it' entry and asserting it is never served.",
+      "test": "tests/acceptance_ac3.rs::cache_unsafe_utterance_never_served"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "TTL expiry: an entry past its ttl_secs is not served. Proven with a frozen/injected clock so no wall-clock flakiness.",
+      "test": "tests/acceptance_ac4.rs::expired_entry_not_served"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "Max-entry bound enforced with LRU eviction: exceeding the bound evicts the least-recently-hit entry. Proven by inserting bound+1 entries and asserting the oldest-unused one is gone.",
+      "test": "tests/acceptance_ac5.rs::lru_eviction_on_capacity_exceeded"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "Embedder client is dim-agnostic (works with any f32 vec length). If the embed socket is unreachable, lookup returns None (cache miss) — never panics. Proven with a failing embedder stub.",
+      "test": "tests/acceptance_ac6.rs::unreachable_embedder_returns_none"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "A deflection metric is exposed: hits_count and total_lookups_count accessible on SemCache, so the caller can compute hit rate.",
+      "test": "tests/acceptance_ac7.rs::deflection_metric_increments_correctly"
+    },
+    {
+      "id": "AC8",
+      "level": "MUST",
+      "description": "cargo test green; cargo clippy -D warnings clean; MSRV 1.85, no let-chains.",
+      "test": "scripts/run-metrics.sh: clippy_warning_count == 0 AND ac_passing_count == 8"
+    }
+  ],
+  "scope": [
+    "A Rust library crate (--target lib) providing SemCache: an embedding-keyed response cache",
+    "Cosine similarity lookup via dot product on L2-normalized f32 vectors",
+    "A pluggable Embedder trait so tests use a deterministic stub; production uses recall's embed RPC",
+    "cache-unsafe gate: a per-entry flag and a well-known unsafe-intent set (time, weather, calendar)",
+    "TTL-based expiry with injected clock (ClockFn) for deterministic tests",
+    "LRU eviction when entry count exceeds a configured capacity bound",
+    "Deflection metrics: hits_count + total_lookups_count on SemCache",
+    "cargo clippy -D warnings clean at MSRV 1.85, no let-chains"
+  ],
+  "non_goals": [
+    "Does NOT implement the recall embed RPC client — it accepts any impl Embedder; wiring to recall is the caller's concern",
+    "Does NOT classify intents — the cache_safe flag is set by the caller (wm-skills) at store time; wm-semcache does not parse utterances",
+    "Does NOT persist cache to disk — in-memory only in v1",
+    "Does NOT run a network server or IPC socket — pure library, no async runtime",
+    "Does NOT implement cache warming, pre-population, or bulk import",
+    "Does NOT handle multi-language or multi-model embedding alignment"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 8,
+    "msrv": "1.85",
+    "additional": {
+      "no_let_chains": true,
+      "no_async_runtime": true,
+      "note": "Library must compile with zero dependencies in the happy path; only thiserror and similar lightweight crates allowed"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why build an embedding-keyed response cache?",
+      "a": "Because the companion assistant for jsy's mother answers the same questions many times per day, and each repeat is a full Sonnet API call."
+    },
+    {
+      "why": 2,
+      "q": "Why does every repeat cost a full API call?",
+      "a": "There is no semantic deduplication layer. Exact-string matching misses paraphrases ('what time is it?' vs 'do you know the time?')."
+    },
+    {
+      "why": 3,
+      "q": "Why not just use a simple exact-match cache?",
+      "a": "Natural language questions from elderly users are never exactly repeated — small wording variations bypass exact-match but carry identical intent."
+    },
+    {
+      "why": 4,
+      "q": "Why is a stale-time-answer worse than a cache miss?",
+      "a": "For an elderly user depending on the assistant for orientation (time, appointments), a confident wrong answer erodes trust and can cause real harm. A cache miss just costs one API call; a stale hit is a confident lie."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Should the cache-unsafe classification be learned or hardcoded?",
+      "resolution": "Hardcoded set of unsafe intents for v1 (time, date, weather, calendar-today, reminders-today). The caller passes cache_safe: bool at store time; the library only enforces the contract, not the classification."
+    },
+    {
+      "question": "What similarity threshold is the default?",
+      "resolution": "0.85 cosine similarity as the default, configurable at SemCache construction time. Tests use a deterministic stub so threshold behavior is proven without floating-point flakiness from a real embedder."
+    },
+    {
+      "question": "Should the Embedder trait be async?",
+      "resolution": "Sync for v1. The library has no async runtime dep. Wiring to an async recall client is the caller's responsibility (they can block_on at the call site if needed)."
+    }
+  ],
+  "created_at": "2026-05-29T00:00:00Z"
+}
