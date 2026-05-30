@@ -18,6 +18,25 @@ Utterances classified cache-unsafe (time, weather, calendar-today, reminders) ar
 - **LRU eviction** enforces a max-entry capacity bound.
 - **Deflection metrics** — `hits / total_lookups` so cost savings are measurable.
 
+## Acceptance tests
+
+1. `store` + `lookup` of a paraphrase (stubbed embedder) returns the cached response when cosine ≥ threshold.
+2. Unrelated utterance (cosine < threshold) returns `None`.
+3. Cache-unsafe utterance returns `None` from `lookup` and is rejected by `store` even when a matching entry exists — the cardinal safety property.
+4. Expired entry (injected frozen clock) is not served.
+5. LRU eviction: exceeding capacity evicts the least-recently-hit entry.
+6. Embedder degrades safely when unreachable — `lookup` returns `None`, never panics; works with 256-dim and 384-dim vectors.
+7. Deflection metric (`hits / total_lookups`) is exposed and correct.
+
+## Install
+
+This is a library crate — add it to your `Cargo.toml`:
+
+```toml
+[dependencies]
+wm-semcache = { git = "https://github.com/j0yen/wm-semcache" }
+```
+
 ## Requirements
 
 - Rust 1.85+ (MSRV)
